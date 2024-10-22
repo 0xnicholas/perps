@@ -7,13 +7,15 @@ Exploration of crypto derivatives, perps and synthetic assets.
 相比现货,交易者使用它主要有两个原因,无法获得标的资产和杠杆。高摩擦的现货市场创造了对流动性衍生品市场的需求,交易衍生品的资本效率更高,(本质是)可使用杠杆;同时允许用户对冲/投机更难获取的资产。
 
 ## 产品说明
-> 早期版本为"缝合怪实验"
+> 早期版本为"缝合怪实验", 个人对defi协议设计的三原则: 平衡、健壮和保持活性。
 
+Trade
 - On-chain Derivative [yes]
 - No Credit Risk [yes]
 - Leverage [150x]
 - Trading pairs [>10]
 - PnL Trading, no spot trading
+- Borrow fee: [yes]
 
 LP
 - LP: stablecoin (include stablecoin swap LP)
@@ -22,27 +24,34 @@ LP
 - LP Mint/Burn: Low fee
 - Passive yield: stablecoin
 
-- Borrow fee: None
+Chain: L2 / L1主权链(-Cosmos sdk) 
 
-- Oracle: Decentralized (Chainlink + Pyth and other agg..)
+Oracle: Decentralized (Chainlink + Pyth and other agg..)
 
 Incentives
 > incentive target: upper-lv users, rather than all users equally.
+- Project token yield: veToken
 
-- Project token yield: es___
+### 交易机制
 
-### 风险控制
+交易以USDC, ETH, DAI作为抵押品, 可利用合成杠杆150x, 聚合price oracle生成价格, 所有交易都使用流动性资金池(LP-token)。
+
+
+
+
+
+## 风险控制
 > 从LP侧和trader侧考虑其核心问题
 
 | Risk | Control |
 |----|----|
 | 预言机价格操纵 | 使场外操纵价格的成本始终高于在场内的盈利 |
 | 单边敞口过大, 资金池失衡 | 价格波动和多空比决定持仓成本 |
-| 流动性不足 | |
+| 流动性不足 | 从风险管理、效率、激励和资产可组合性考虑 |
 
-#### Trade
+### Trade
 
-##### Price impact/spread
+#### Price impact/spread
 
 Spread 是开仓时需要付出的额外滑点，基于预言机定价时，其滑点应该根据预言机来源的交易对深度而动态调整。使得在场外操纵价格的成本始终高于在场内的盈利， Spread 正相关开仓规模和场内OI影响，而负相关于场外现货深度。
 
@@ -65,55 +74,148 @@ spread机制风险管理：
 Spread = (traderVolumeInLast15Mins + (positionSize / 2)) * protectionFactorIfPosivePnlAndOpenLessThan15Mins / (multiplier * depth)
 ```
 
-##### Rollover Fee / Funding Fee
+#### Borrowing Fee
 
-**Rollover fee**根据近期波动性计算，展期费用多空均要缴纳，在frenzied bull时，波动性和多空比的加大将会让多方支付的费用快速上涨，以此回补作为对手方的损失以及控制多空比。
+费用结构
 
-*计算*
+**Brrowing APR**
+
+借款年利率代表在100% vault利用率（net OI = vault TVL）时对特定的交易对或一组相关对收取的借款费用。计算如下,
 
 ```math
-RolloverFee = (CurrentBlock - tradeOpenBlock) * rolloverFeePerBlock\% * tradeCollateral
+BorrowingAPR = \frac{volFactor}{MaxVaultExposure\% * marketFactor}
 ```
 
-*参数设置*
+- volFactor: volatility coefficient (more volatility = more expensive).
+- Max vault exposure %: This parameter is set depending on how much maximum vault exposure is targeted ideally. 20% default.
+- marketFactor: The coefficient allows for adjusting costs for groups of pairs (between 0 and 1).
 
-参数设置将取决于货币对的波动性，使用 ATR（average true range）来衡量：
+volFactor计算
+
 ```math
-\tag{x=1.25, y=20} RolloverFeePerBlock \% = \frac{(ATR4WeekAverage\%)^x * 52}{y}
+volFactor = \frac{(dailyVol * 365)^{1.25}}{150}
 ```
+
+```math
+dailyVol = \frac{(3*AvgDailyATR\%1Days + 2 * AvgDailyATR\%7Days + AvgDailyATR\%30Days)}{6}
+```
+
+daily ATR%(average true range)是衡量资产每日波动%的技术指标，对于一组(如crypto group)，则使用所有所有交易对的平均值。
+
+market factor在所有交易对上都是1(不影响APR), 对于组来说，market factor与组内所有交易对相关性成正比(low correlation 0 = closer to 0, higher correlation = closer to 1)。 这样在组这层，费用就会降低，从而可以在组内热门交易对上开展更多活动，而不会过快增加所有其他交易对的费用。
+
+*计算示例*
+
+- BTC/USD (volFactor = 60, max vault exposure % = 20%, marketFactor = 1) → 60 / 0.2 * 1 = 300%
+- Crypto group (volFactor = 70, max vault exposure % = 20%, marketFactor = 0.5) → 70 / 0.2 * 0.5 = 175%
+
+> 上述示例中的 300% 和 175% 借款年利率分别代表 20% vault风险敞口（= the max vault exposure）下的 60% 和 35% 年利率。
+
+**Pair borrowing APR**
+
+交易对借贷费用是指每个交易对相关的holding费用，根据特定交易对的net OI和borrowing APR以及vault TVL计算。
+
+在任意时间点收取的年利率均按以下公式计算：
+
+```math
+PairBorrwingAPR = \frac{BorrowingAPR * Net OI}{VaultTVL}
+```
+
+**Group borrowing APR**
+
+具有显著相关性的交易对会分组，并收取分组借款费用, 与pair计算方式相同。
+
+每个交易对只能分在一组中。如果一对资产与其他资产没有明显关联，则不属于任何组别（无组别费用）。
+
+**Final Borrowing Fee Caculation**
+
+用户在任意时间点支付的最终借款费用由交易对借款费用和分组借款费用的最大值决定。
+
+考虑到单个交易对和相关交易对的风险敞口，这种方法可确保协议的整体风险得到有效管理。
+
+### LP
+> LP侧关键风险是流动性不足
+
+LP token为资产净值型(net asset value), 即公平对待所有staker, 极端情况下风险共担（不保本）。
+
+激励长期锁仓, 动态调节资金进出时间，避免极端流动。
+
+更多详见下文 Liquidity Pool.
+
+## Liquidity Pool
+
+流动性池可分为四个层面来思考：风险管理、效率、激励和资产可组合性。
+
+如同银行发生挤兑时, 最后提款的那批人将承担损失。因此协议选择让风险分布均匀，极端情况下风险共担。
+
+当资金池抵押不足时, 承担流动性风险的staker应当获得奖励, 按比例奖励那些在一些时间内锁定其流动性token的用户(类似veToken)。
+
+"LP-token"的价值应当能在其他地方进行利用。
+
+### 流动性池
+
+流动性池实现了[ERC-4626](https://eips.ethereum.org/EIPS/eip-4626), LP-tokens为ERC20.
+
+LP-token的价格与基础资产会通过算法来确定, 计算变量根据: 每lp-token的累计费用 + 每lp-token open + closed PnL, 前者始终增加价格, 后者可变。
+
+就是说发生损失时由所有staker共同承担, 同时资金池的超额抵押会平均降低所有staker的风险, 以及在流动性风险较高时, 协议可提供统一激励。
+
+LP-token的价格由每个epoch开始时的PnL值以及持续累计的基础token奖励决定。
+
+> 由于gas成本,API调用, 协议无法实时提供open trades PnL feed, 所有有必要使用epoch (类似一个数据训练样本的训练轮次)
+
+计算公式如下,
+
+```math
+LP-token = 1 + accRewardsPerToken - max(0, accPnlPerTokenUsed)
+```
+
+- accRewardsPerToken, 每个lp-token累计的基础token奖励。
+- accPnlPerTokenUsed, 每个lp-token在每个epoch开始时累计的open&closed PnL(with a maximum of 1 + accRewardsPerToken -empty pool)
+- accPnlPerTokenUsed, 是accPnlPerToken 在每个纪元开始时的快照。这意味着 lp-token 价格在每个epoch开始时都会更新一次。
+
+> 每个epoch持续3天, 进行4次open trades PnL测量(来自chainlink所有答案的测量中值), 测量从每个epoch第3天开始, 每6小时进行一次(0,6,12,18h), 然后再第3天结束前(epoch开始后72h), 协议会double check测量结果, 这样做是为了计算下一个epoch将使用的open trades PnL.
+获得测量中值后, 取4个测量中值的平均值(>0), 然后使用与(当前epoch)前一个open trades PnL 平均值的delta值更新 accPnlPerToken 变量(>1), 开始一个新epoch。
+
+> 多个open trades测量会增加 Oracle 操作的难度, 使协议有更多机会检查差异。
+
+该公式的目标是不会因过度抵押(抵押水平超过 100%)而导致LP-token价格上涨, 
+因为公式利用了一部分原本作为收入的基础token为staker创建一层缓冲(另一部分会mint新的lp-token给用户), 使 LP-token价格在未来不太可能下降(因抵押不足)。
+
+总之, LP-token的价格由两个主要变量决定:
+- 每个LP-Ttken 的累计基础token奖励`accRewardsPerToken`
+- 每个LP-token 在每个epoch开始时累计open&closed PnL `accPnlPerTokenUsed`
+
+> 奖励给staker的trading fee自动复利计入LP-token
+
+
+### Staking
+用户可以在一个epoch的任何时间将基础token存入资金池并收到LP-token。同时可选择将存款锁定一段时间, 从而获得LP-token的`discount`,`discount`包括基于时间的激励和基于抵押的激励。
+
+1. 在staking时lock up LP-tokens (2weeks~1year).
+2. 在抵押率低于150%时随时mint LP-token, `discount`与抵押水平成正比, 最高`discount`5%。抵押率低于100%, `discount`为5%。
+在 100%-150%之间，`discount`从 5%线性递减到 0%
 
 *示例*
 
-**Funding fee**旨在尽量缩小多空OI(Open Interest)之间的差距，以防止在任何交易对中仅在一方产生非常大的风险敞口。
+假设用户在抵押率为120%时将USDC存入资金池, 并决定将LP-token锁定6个月
 
-*计算*
+`discount = (150%-120%)/(150%-100%)collateralization * 5% total discount * 6m/12m = 1.5%`
 
-```math
-AccumulatedFundingFeePerOI(long) += \frac{(LongOI - ShortOI) * blocksElapsed * FundingFeePerBlock\%}{LongOI} \\
+当锁定期结束, 可以claim LP-token, 锁定的LP-token头寸表示为`veTokens`(ERC-20)
 
-AccumulatedFundingFeePerOI(short) += \frac{(ShortOI - LongOI) * blocksElapsed * FundingFeePerBlock\%}{ShortOI}
-```
+> 激励资金池锁仓为协议的流动性带来了一层新的安全性和稳定性。
 
-当交易开启时，我们存储初始累计的funding fee值，并在每次OI变化时更新。
 
-要计算当前交易应该产生多少funding fee，则计算
-```math
-FundingFee = (CurrentAccumulatedFundingFeePerOI - InitialAccumulatedFundingFeePerOI) * TradeCollateral * TradeLeverage
-```
-
-如果该值为负数，则像正 PnL 一样将其添加到交易价值中，并使清算价格进一步远离。如果该值为正数，则像负 PnL 一样将其从交易价值中移除，并使清算价格更加接近。
-
-*参数设置*
-和Rollover fee类似，参数设置取决于交易对的波动性，使用 ATR（average true range）来衡量：
-```math
-\tag{x=1.25, y=50} FundingFeePerBlock\% = \frac{ATR4WeekAverage\%^x * 52}{y}
-```
-
-*示例*
+### Withdrawing
 
 
 
-#### LP
+### Utility Token Mint&Burn(PUT)
+> PUT, perps utility token.
+
+
+## Liquidation
 
 
 
