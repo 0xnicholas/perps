@@ -6,7 +6,7 @@ Exploration of crypto derivatives, perps and synthetic assets.
 
 相比现货,交易者使用它主要有两个原因,无法获得标的资产和杠杆。高摩擦的现货市场创造了对流动性衍生品市场的需求,交易衍生品的资本效率更高,(本质是)可使用杠杆;同时允许用户对冲/投机更难获取的资产。
 
-## 产品说明
+## 协议说明
 > 早期版本为"缝合怪实验", 个人对defi协议设计的三原则: 平衡、健壮和保持活性。
 
 Trade
@@ -36,7 +36,88 @@ Incentives
 
 交易以USDC, ETH, DAI作为抵押品, 可利用合成杠杆150x, 聚合price oracle生成价格, 所有交易都使用流动性资金池(LP-token)。
 
+交易设置
+1. Trade type: long(buy) *or* short(sell).
+    - Market: 以市场价(+spread)立即开仓
+    - Limit: 如果价格达到 threshold + spread, 则以设定的价格执行。当用户想以低于当前价格做多或在价格高于当前价格时做空时使用。
+    - Stop Limit: 执行价格为 current market price + spread, 当用户想在breakout时做多, 在breakdown时做空(价格高于当前价格时做多，或在价格低于当前价格时做空)。
+2. Collatreal: 如果被清算, 用户将承担的最大风险金额。collateral x leverage > minimum position size.
+3. Leverage: 价格上下波动的倍数，增加风险敞口。
+4. Max slippage: 用于在开仓前价格向交易方向移动过快时自动取消订单。例如，用户想以当前价格做多，但在开仓前价格上涨了 1%，则会自动取消。
+5. Stop Loss and Take Profit: 
 
+Collaterals
+- 遵循合成交易架构, 允许交易者以指定代币作为抵押品交易任何代币对, 就是说用户不是直接买入或卖出相关资产，而是根据其价格走势进行交易。
+- 交易费用以使用的抵押品支付，从而简化了交易，并和用户的交易策略保持一致。
+- 每个抵押品都有自己的lp-token vault及独立流动性支撑。比如USDC的OI如果被用完, 另一种抵押品仍可用。
+- 头寸大小由抵押品类型决定,  not the traded asset nor its notional value.
+
+Max available open interest (maxOI)
+`maxOI = (vaultExposure * vaultTvl / avgDailyAtr^atrExponent * atrMultiplier) * oiFactor / correlation * logPairCount`
+
+该协议与传统CEX的执行差异:
+- 在大多数CEX中, 如trader的抵押品是ETH, 在某个代币对(underlying pair)上开仓, 仓位大小是以基础代币为单位的固定数量。当ETH波动时, 仓位大小不会改变。但头寸的当前杠杆会随代币对价格变化，也随 ETH 价格变化。因此，清算价格也随着 ETH 价格的变化而变化。
+
+- 在本协议中, trader抵押品也是ETH, 但开仓的代币对是以 ETH 为单位的固定仓位, 而代币(underlying pair)的数量是可变的。这种设计使得ETH价格的任何变化都不会影响当前头寸的杠杆, 清算价格与ETH价格无关。
+
+示例:
+- traderA, 1 ETH collaterl on CEX
+- traderA, 1 ETH collaterl on Perps
+- ETH price = $2000
+- open a 10x long position on the pair XXX
+- XXX price = $10
+
+| | | |
+|----|----|----|
+|**CEX**| position size = 2000XXX(notional position size = $20,000. <u>the position size does not change during the life-cycle.</u> If ETH-$1,900,position size is still 2,000XXX. ) | 在 CEX，当前杠杆是 ETH 和基础代币价格的函数，而清算价格是 ETH和funding的函数。当 ETH 跌至 1,900 美元时，交易者的清算价格就会降低，并越来越接近。|
+|**Perps**|position size is 10 ETH (notional position size = $20,000) = 2,000 XXX. <u>the position size in ETH does not change during the lifecycle; but the position size in XXX amount is variable.</u> | 假设 ETH 的价格现在是 1,900$，而 XXX 的价格保持 10$不变。现在头寸规模 10 ETH 相当于notional position size 19,000$ = 1900 XXX; 相反，如果 ETH 价格上涨到 2100$，而 XXX价格保持不变，他的头寸规模 10 ETH 相当于notional position size 21000$ = 2100XXX。|
+
+
+在本协议中，
+
+ETH 价格下降，NPS也随之减少：因此，如果基础代币价格下降，交易者损失的资金将减少；如果基础代币价格上涨，交易者赚取的资金将减少。
+
+ETH 价格上涨，NPS也会增加：这会双向增加交易者的P&L，也就是说，如果基础代币价格上涨，交易者会赚得更多；但如果基础代币价格下跌，交易者也会损失更多。
+
+该协议的设计使得trader的清算价格在两种情况下都保持不变, 它完全不受 ETH 价格变化的影响。这使得管理清算风险变得更加容易。
+
+### Fees
+
+- Opening fee: 6 bps (0.06/100)
+
+- Spread(fixed): 0~4bps 
+
+- Spread(dynamic, as Price impact):
+
+`Dynamic Spread (%) = (Open interest {long/short} + New trade position size / 2) / 1% depth {above/below}`
+
+>  (long: 1% depth above / short: 1% depth below) -Binance.
+
+- Borrwing fees
+详见下文风控部分
+
+- Liquidation Prices
+
+Liquidation Price Distance = `Open Price * (Collateral * Liquidation Threshold - Closing Fee - Borrowing Fees) / Collateral / Leverage`
+
+Liquidation price = 
+`If Long: Open Price - Liquidation Price Distance
+Else (Short): Open Price + Liquidation Price Distance.`
+
+- Closing fee: 6bps ?
+> 假设交易对上涨1%
+
+`Final PnL = InitialPositionSize * 1% - (InitialPositionSize * (0.06/100)) - Borrwing fee`
+
+平仓后钱包将收到Collateral + FinalPnL.
+
+平仓费假设 ETH/USD 比开盘价上涨 1%，我们以3,033.6 的价格平仓。挂单利润 (PnL) 将是 2480（我们的杠杆抵押品）的 1%，即24.85 DAI.现在，我们平仓交易，因此需要支付平仓费。请注意，费用总是按初始仓位大小收取（不含 PnL）。
+
+2485 * (0.06/100) = 1.988 DAI 平仓费
+--> 24.85 - 1.988 =22.862 DAI PnL
+现在我们再假设这笔交易支付了 0.5 DAI 的借款费用：
+22.862 - 0.5 =22.362 DAI 最终 PnL
+因此，平仓后您的钱包将收到270.862 DAI（248.5 DAI 抵押品 + 22.362 PnL）。
 
 
 
