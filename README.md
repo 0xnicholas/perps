@@ -83,7 +83,7 @@ ETH 价格上涨，NPS也会增加：这会双向增加交易者的P&L，也就�
 
 ### Fees
 
-- Opening fee: 6 bps (0.06/100)
+- Opening fee(entry funding fee): 6 bps (0.06/100)
 
 - Spread(fixed): 0~4bps 
 
@@ -109,16 +109,7 @@ Else (Short): Open Price + Liquidation Price Distance.`
 
 `Final PnL = InitialPositionSize * 1% - (InitialPositionSize * (0.06/100)) - Borrwing fee`
 
-平仓后钱包将收到Collateral + FinalPnL.
-
-平仓费假设 ETH/USD 比开盘价上涨 1%，我们以3,033.6 的价格平仓。挂单利润 (PnL) 将是 2480（我们的杠杆抵押品）的 1%，即24.85 DAI.现在，我们平仓交易，因此需要支付平仓费。请注意，费用总是按初始仓位大小收取（不含 PnL）。
-
-2485 * (0.06/100) = 1.988 DAI 平仓费
---> 24.85 - 1.988 =22.862 DAI PnL
-现在我们再假设这笔交易支付了 0.5 DAI 的借款费用：
-22.862 - 0.5 =22.362 DAI 最终 PnL
-因此，平仓后您的钱包将收到270.862 DAI（248.5 DAI 抵押品 + 22.362 PnL）。
-
+receive Collateral + FinalPnL.
 
 
 ## 风险控制
@@ -223,7 +214,7 @@ LP token为资产净值型(net asset value), 即公平对待所有staker, 极端
 
 更多详见下文 Liquidity Pool.
 
-## Liquidity Pool
+## Liquidity Pool(Vault)
 
 流动性池可分为四个层面来思考：风险管理、效率、激励和资产可组合性。
 
