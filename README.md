@@ -1,6 +1,6 @@
 # Perps
 
-Exploration of crypto derivatives, perps and synthetic assets.
+> Exploration of crypto derivatives, perps and synthetic assets.
 
 衍生品有两个用途: hedging and speculation.
 
